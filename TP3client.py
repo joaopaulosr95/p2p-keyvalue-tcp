@@ -12,7 +12,8 @@ if __name__ == "__main__":
                         metavar="servent",
                         help="host:port of the servent to connect to")
     args = parser.parse_args()
-    ipaddr = "127.0.0.1"
+    #ipaddr = "127.0.0.1"
+    ipaddr = "192.168.56.103"
     c = Client(ipaddr, args.port)
     serventIpAddr, serventPort = args.servent.split(":")
     c.run(tuple([serventIpAddr, int(serventPort)]))

@@ -16,7 +16,8 @@ if __name__ == "__main__":
                         nargs="*",
                         help="list of host:port servents")
     args = parser.parse_args()
-    ipaddr = "127.0.0.1"
+    #ipaddr = "127.0.0.1"
+    ipaddr = "192.168.56.1"
     s = Servent(ipaddr, args.port)
     s.loadKeys(args.keyspath)
     s.run(args.servents)
