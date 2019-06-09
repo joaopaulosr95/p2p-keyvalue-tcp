@@ -1,6 +1,7 @@
 #!/usr/local/bin/python3
 import json
 import logging
+import select
 import socket
 import struct
 
@@ -141,6 +142,51 @@ def unpack(typeNumber, payload):
     except struct.error:
         logging.warning("Invalid headerFormat provided")
     return message
+
+
+class Servent:
+    def __init__(self, ipaddr, port):
+        self._ipaddr = ipaddr
+        self._port = port
+        self._peerList = None
+        self._clientList = set()
+        self._sockList = None
+
+    # the following methods expect client/peer to be tuples following the
+    # format (socket, ipaddr, port)
+    def getClient(self, client):
+        pass
+
+    # take a client tuple ()
+    def addClient(self, client):
+        pass
+
+    def delClient(self, client):
+        pass
+
+    def getPeer(self, peer):
+        pass
+
+    def addPeer(self, peer):
+        pass
+
+    def delPeer(self, peer):
+        pass
+
+    def run(self, servents=None):
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sockList = [self._sock]
+        while True:
+            readable, _, _ = select.select(self._sockList, [], [], 0)
+            for sock in readable:
+                # a new servent/client has arrived
+                if sock is self._sock:
+                    client, addr = self._sock.accept()
+                else:
+                    data = sock.recv(MAXSERVENTS)
+
+    def processMessage(data):
+        pass
 
 
 class Client:
