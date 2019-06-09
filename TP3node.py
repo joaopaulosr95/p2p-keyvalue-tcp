@@ -26,30 +26,27 @@ MESSAGEHEADERS = dict(
 
 def messageFactory(typeNumber, **kwargs):
     try:
-        # ID
-        if typeNumber == 4:
+        if typeNumber == MESSAGETYPES["ID"]:
             return json(typeNumber=typeNumber,
                         port=kwargs.get("port"))
-        # KEYREQ
-        elif typeNumber == 5:
+        elif typeNumber == MESSAGETYPES["KEYREQ"]:
             return json(typeNumber=typeNumber,
                         nseq=kwargs.get("nseq"),
                         size=kwargs.get("size"),
                         key=kwargs.get("key"))
-        # TOPOREQ
-        elif typeNumber == 6:
+        elif typeNumber == MESSAGETYPES["TOPOREQ"]:
             return json(typeNumber=typeNumber,
                         nseq=kwargs.get("nseq"))
-        # fits both KEYFLOOD and TOPOFLOOD message
-        elif typeNumber in [7, 8]:
+        elif typeNumber in [MESSAGETYPES["KEYFLOOD"],
+                            MESSAGETYPES["TOPOFLOOD"]]:
             return json(typeNumber=typeNumber,
                         ttl=kwargs.get("ttl"),
                         nseq=kwargs.get("nseq"),
                         sourceIp=kwargs.get("sourceIp"),
                         sourcePort=kwargs.get("sourcePort"),
-                        size=kwargs.get("size")) + kwargs.get("info")
-        # RESP
-        elif typeNumber == 9:
+                        size=kwargs.get("size"),
+                        info=kwargs.get("info"))
+        elif typeNumber == MESSAGETYPES["RESP"]:
             return json(typeNumber=typeNumber,
                         nseq=kwargs.get("nseq"),
                         size=kwargs.get("size"),
@@ -77,7 +74,7 @@ def pack(typeNumber, **kwargs):
         return struct.pack(MESSAGEHEADERS["KEYREQ"],
                            typeNumber,
                            kwargs.get("nseq"),
-                           kwargs.get("size")) + kwargs.get("info")
+                           kwargs.get("size")) + kwargs.get("key")
     elif typeNumber == MESSAGETYPES["TOPOREQ"]:
         return struct.pack(MESSAGEHEADERS["TOPOREQ"],
                            typeNumber,
@@ -94,7 +91,7 @@ def pack(typeNumber, **kwargs):
         return struct.pack(MESSAGEHEADERS["RESP"],
                            typeNumber,
                            kwargs.get("nseq"),
-                           kwargs.get("size")) + kwargs.get("info")
+                           kwargs.get("size")) + kwargs.get("value")
     return None
 
 
@@ -102,43 +99,55 @@ def unpack(typeNumber, payload):
     message = None
     try:
         if typeNumber == MESSAGETYPES["ID"]:
-            unpacked = struct.unpack(MESSAGEHEADERS["ID"], payload[:4])
+            headerLimit = struct.calcsize(MESSAGEHEADERS["ID"])
+            unpacked = struct.unpack(MESSAGEHEADERS["ID"],
+                                     payload[:headerLimit])
             message = messageFactory(MESSAGETYPES["ID"],
                                      port=unpacked[0])
         elif typeNumber == MESSAGETYPES["KEYREQ"]:
-            unpacked = struct.unpack(MESSAGEHEADERS["KEYREQ"], payload[:6])
+            headerLimit = struct.calcsize(MESSAGEHEADERS["KEYREQ"])
+            unpacked = struct.unpack(MESSAGEHEADERS["KEYREQ"],
+                                     payload[:headerLimit])
             message = messageFactory(MESSAGETYPES["KEYREQ"],
                                      nseq=unpacked[0],
                                      size=unpacked[1],
-                                     value=payload[7:])
+                                     key=payload[headerLimit + 1:])
         elif typeNumber == MESSAGETYPES["TOPOREQ"]:
-            unpacked = struct.unpack(MESSAGEHEADERS["TOPOREQ"], payload[:6])
+            headerLimit = struct.calcsize(MESSAGEHEADERS["TOPOREQ"])
+            unpacked = struct.unpack(MESSAGEHEADERS["TOPOREQ"],
+                                     payload[:headerLimit])
             message = messageFactory(MESSAGETYPES["TOPOREQ"],
                                      nseq=unpacked[0])
         elif typeNumber == MESSAGETYPES["KEYFLOOD"]:
-            unpacked = struct.unpack(MESSAGEHEADERS["KEYREQ"], payload[:16])
+            headerLimit = struct.calcsize(MESSAGEHEADERS["KEYFLOOD"])
+            unpacked = struct.unpack(MESSAGEHEADERS["KEYFLOOD"],
+                                     payload[:headerLimit])
             message = messageFactory(MESSAGETYPES["KEYFLOOD"],
                                      ttl=unpacked[0],
                                      nseq=unpacked[1],
                                      sourceIp=unpacked[2],
                                      sourcePort=unpacked[3],
                                      size=unpacked[4],
-                                     value=payload[:17])
+                                     info=payload[headerLimit + 1:])
         elif typeNumber == MESSAGEHEADERS["TOPOFLOOD"]:
-            unpacked = struct.unpack(MESSAGEHEADERS["KEYREQ"], payload[:16])
+            headerLimit = struct.calcsize(MESSAGEHEADERS["TOPOFLOOD"])
+            unpacked = struct.unpack(MESSAGEHEADERS["TOPOFLOOD"],
+                                     payload[:headerLimit])
             message = messageFactory(MESSAGETYPES["TOPOFLOOD"],
                                      ttl=unpacked[0],
                                      nseq=unpacked[1],
                                      sourceIp=unpacked[2],
                                      sourcePort=unpacked[3],
                                      size=unpacked[4],
-                                     value=payload[:17])
+                                     info=payload[headerLimit+1:])
         elif typeNumber == MESSAGETYPES["RESP"]:
-            unpacked = struct.unpack(MESSAGETYPES["RESP"], payload[:6])
+            headerLimit = struct.calcsize(MESSAGEHEADERS["RESP"])
+            unpacked = struct.unpack(MESSAGETYPES["RESP"],
+                                     payload[:headerLimit])
             message = messageFactory(MESSAGETYPES["RESP"],
                                      nseq=unpacked[0],
                                      size=unpacked[1],
-                                     value=payload[:7])
+                                     value=payload[headerLimit + 1:])
     except struct.error:
         logging.warning("Invalid headerFormat provided")
     return message
@@ -215,13 +224,18 @@ class Client:
             if payload:
                 message = unpack(MESSAGETYPES["RESP"], payload)
                 if not message:
-                    return 1, None
-                return 2, message
+                    responseCode, contents = 1, None
+                responseCode, contents = 2, message
         except socket.timeout:
-            return 0, None
+            responseCode, contents = 0, None
         except socket.error as err:
             logging.warning(err)
-            return 3, None
+            responseCode, contents = 3, None
+        try:
+            sock.close()
+        except socket.error:
+            pass
+        return responseCode, contents
 
     def run(self, servent):
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
