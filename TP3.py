@@ -1,5 +1,4 @@
 #!/usr/local/bin/python3
-import json
 import logging
 import select
 import socket
@@ -11,7 +10,7 @@ logging.basicConfig(level=logging.INFO,
 
 # constants
 MAXSERVENTS = 10
-SOCKETTIMEOUT = 4
+SOCKETTIMEOUT = 4.0
 MTU = 416  # keyflood/topoflood are the larger packets we implement
 MESSAGETYPES = dict(
     ID=4,
@@ -33,39 +32,41 @@ def messageFactory(typeNumber, **kwargs):
     """ Take a typeNumber and a given list of named arguments to build a
     human-readable message in json format
     """
+    message = None
     try:
         if typeNumber == MESSAGETYPES["ID"]:
-            return json(typeNumber=typeNumber,
-                        port=kwargs.get("port"))
+            message = dict(typeNumber=typeNumber,
+                           port=kwargs.get("port"))
         elif typeNumber == MESSAGETYPES["KEYREQ"]:
-            return json(typeNumber=typeNumber,
-                        nseq=kwargs.get("nseq"),
-                        size=kwargs.get("size"),
-                        key=kwargs.get("key"))
+            message = dict(typeNumber=typeNumber,
+                           nseq=kwargs.get("nseq"),
+                           size=kwargs.get("size"),
+                           key=kwargs.get("key"))
         elif typeNumber == MESSAGETYPES["TOPOREQ"]:
-            return json(typeNumber=typeNumber,
-                        nseq=kwargs.get("nseq"))
+            message = dict(typeNumber=typeNumber,
+                           nseq=kwargs.get("nseq"))
         elif typeNumber in [MESSAGETYPES["KEYFLOOD"],
                             MESSAGETYPES["TOPOFLOOD"]]:
-            return json(typeNumber=typeNumber,
-                        ttl=kwargs.get("ttl"),
-                        nseq=kwargs.get("nseq"),
-                        sourceIp=kwargs.get("sourceIp"),
-                        sourcePort=kwargs.get("sourcePort"),
-                        size=kwargs.get("size"),
-                        info=kwargs.get("info"))
+            message = dict(typeNumber=typeNumber,
+                           ttl=kwargs.get("ttl"),
+                           nseq=kwargs.get("nseq"),
+                           sourceIp=kwargs.get("sourceIp"),
+                           sourcePort=kwargs.get("sourcePort"),
+                           size=kwargs.get("size"),
+                           info=kwargs.get("info"))
         elif typeNumber == MESSAGETYPES["RESP"]:
-            return json(typeNumber=typeNumber,
-                        nseq=kwargs.get("nseq"),
-                        size=kwargs.get("size"),
-                        value=kwargs.get("value"))
-        logging.warning("Invalid message typeNumber %d" % typeNumber)
-    except (json.JSONDecodeError, KeyError) as exc:
-        logging.warning(exc)
-    return None
+            message = dict(typeNumber=typeNumber,
+                           nseq=kwargs.get("nseq"),
+                           size=kwargs.get("size"),
+                           value=kwargs.get("value"))
+        else:
+            logging.warning("Invalid message typeNumber %d" % typeNumber)
+    except (KeyError, TypeError) as err:
+        logging.warning(err)
+    return message
 
 
-def pack(typeNumber, **kwargs):
+def pack(typeNumber, kwargs):
     """ Take a typeNumber and a given list of named arguments to pack a
     message to network byte format
     """
@@ -73,40 +74,38 @@ def pack(typeNumber, **kwargs):
     def ipToInt(ip):
         return struct.unpack("!L", socket.inet_aton(ip))[0]
 
-    if typeNumber not in range(4, 10):
+    if typeNumber not in MESSAGETYPES.values():
         return None
 
-    info = kwargs.get("info", None)
-    if info and len(info) > 400:
-        logging.warning("Info is larger than 400 characters")
-        return None
-
-    if typeNumber == MESSAGETYPES["ID"]:
+    elif typeNumber == MESSAGETYPES["ID"]:
         return struct.pack(MESSAGEHEADERS["ID"],
                            typeNumber,
-                           kwargs.get("port"))
+                           kwargs["port"])
     elif typeNumber == MESSAGETYPES["KEYREQ"]:
         return struct.pack(MESSAGEHEADERS["KEYREQ"],
                            typeNumber,
-                           kwargs.get("nseq"),
-                           kwargs.get("size")) + kwargs.get("key")
+                           kwargs["nseq"],
+                           kwargs["size"]) \
+               + kwargs["key"].encode()
     elif typeNumber == MESSAGETYPES["TOPOREQ"]:
         return struct.pack(MESSAGEHEADERS["TOPOREQ"],
                            typeNumber,
-                           kwargs.get("nseq"))
+                           kwargs["nseq"])
     elif typeNumber in [MESSAGETYPES["KEYFLOOD"], MESSAGETYPES["TOPOFLOOD"]]:
         return struct.pack(MESSAGEHEADERS["KEYFLOOD"],
                            typeNumber,
-                           kwargs.get("ttl"),
-                           kwargs.get("nseq"),
-                           ipToInt(kwargs.get("sourceIp")),
-                           kwargs.get("sourcePort"),
-                           kwargs.get("size")) + kwargs.get("info")
+                           kwargs["ttl"],
+                           kwargs["nseq"],
+                           ipToInt(kwargs["sourceIp"]),
+                           kwargs["sourcePort"],
+                           kwargs["size"]) \
+               + kwargs["info"].encode()
     elif typeNumber == MESSAGETYPES["RESP"]:
         return struct.pack(MESSAGEHEADERS["RESP"],
                            typeNumber,
-                           kwargs.get("nseq"),
-                           kwargs.get("size")) + kwargs.get("value")
+                           kwargs["nseq"],
+                           kwargs["size"])\
+               + kwargs["value"].encode()
     return None
 
 
@@ -125,51 +124,59 @@ def unpack(typeNumber, payload):
             unpacked = struct.unpack(MESSAGEHEADERS["ID"],
                                      payload[:headerLimit])
             message = messageFactory(MESSAGETYPES["ID"],
-                                     port=unpacked[0])
+                                     port=unpacked[1])
         elif typeNumber == MESSAGETYPES["KEYREQ"]:
             headerLimit = struct.calcsize(MESSAGEHEADERS["KEYREQ"])
             unpacked = struct.unpack(MESSAGEHEADERS["KEYREQ"],
                                      payload[:headerLimit])
+            key = struct.unpack("!%ds" % unpacked[3],
+                                payload[headerLimit + 1:])
             message = messageFactory(MESSAGETYPES["KEYREQ"],
-                                     nseq=unpacked[0],
-                                     size=unpacked[1],
-                                     key=payload[headerLimit + 1:])
+                                     nseq=unpacked[1],
+                                     size=unpacked[2],
+                                     key=key)
         elif typeNumber == MESSAGETYPES["TOPOREQ"]:
             headerLimit = struct.calcsize(MESSAGEHEADERS["TOPOREQ"])
             unpacked = struct.unpack(MESSAGEHEADERS["TOPOREQ"],
                                      payload[:headerLimit])
             message = messageFactory(MESSAGETYPES["TOPOREQ"],
-                                     nseq=unpacked[0])
+                                     nseq=unpacked[1])
         elif typeNumber == MESSAGETYPES["KEYFLOOD"]:
             headerLimit = struct.calcsize(MESSAGEHEADERS["KEYFLOOD"])
             unpacked = struct.unpack(MESSAGEHEADERS["KEYFLOOD"],
                                      payload[:headerLimit])
+            info = struct.unpack("!%ds" % unpacked[6],
+                                payload[headerLimit + 1:])
             message = messageFactory(MESSAGETYPES["KEYFLOOD"],
-                                     ttl=unpacked[0],
-                                     nseq=unpacked[1],
-                                     sourceIp=intToIp(unpacked[2]),
-                                     sourcePort=unpacked[3],
-                                     size=unpacked[4],
-                                     info=payload[headerLimit + 1:])
+                                     ttl=unpacked[1],
+                                     nseq=unpacked[2],
+                                     sourceIp=intToIp(unpacked[3]),
+                                     sourcePort=unpacked[4],
+                                     size=unpacked[5],
+                                     info=info)
         elif typeNumber == MESSAGEHEADERS["TOPOFLOOD"]:
             headerLimit = struct.calcsize(MESSAGEHEADERS["TOPOFLOOD"])
             unpacked = struct.unpack(MESSAGEHEADERS["TOPOFLOOD"],
                                      payload[:headerLimit])
+            info = struct.unpack("!%ds" % unpacked[6],
+                                 payload[headerLimit + 1:])
             message = messageFactory(MESSAGETYPES["TOPOFLOOD"],
-                                     ttl=unpacked[0],
-                                     nseq=unpacked[1],
-                                     sourceIp=intToIp(unpacked[2]),
-                                     sourcePort=unpacked[3],
-                                     size=unpacked[4],
-                                     info=payload[headerLimit+1:])
+                                     ttl=unpacked[1],
+                                     nseq=unpacked[2],
+                                     sourceIp=intToIp(unpacked[3]),
+                                     sourcePort=unpacked[4],
+                                     size=unpacked[5],
+                                     info=info)
         elif typeNumber == MESSAGETYPES["RESP"]:
             headerLimit = struct.calcsize(MESSAGEHEADERS["RESP"])
-            unpacked = struct.unpack(MESSAGETYPES["RESP"],
+            unpacked = struct.unpack(MESSAGEHEADERS["RESP"],
                                      payload[:headerLimit])
+            value = struct.unpack("!%ds" % unpacked[3],
+                                  payload[headerLimit + 1:])
             message = messageFactory(MESSAGETYPES["RESP"],
-                                     nseq=unpacked[0],
-                                     size=unpacked[1],
-                                     value=payload[headerLimit + 1:])
+                                     nseq=unpacked[1],
+                                     size=unpacked[2],
+                                     value=value)
     except struct.error:
         pass
     return message
@@ -178,10 +185,10 @@ def unpack(typeNumber, payload):
 def interact(sock, message):
     """ Encode and send a message to a given socket """
     try:
-        encoded = pack(message)
+        encoded = pack(message["typeNumber"], message)
         sock.send(encoded)
         return True
-    except socket.error as err:
+    except (KeyError, TypeError, socket.error) as err:
         logging.warning(err)
     return False
 
@@ -241,7 +248,7 @@ class Servent:
                 return message
 
     def getClient(self, sock):
-        clients = filter(lambda c: c[2] == sock, self.clientList)
+        clients = list(filter(lambda c: c[2] == sock, self.clientList))
         if len(clients) == 0:
             return None
         return clients[0]
@@ -254,7 +261,8 @@ class Servent:
         if not source:
             logging.warning("Client not found in clientList")
             return
-
+        logging.info("Received KEYREQ fromo client %s:%d" % (source[0],
+                                                             source[1]))
         key = self.getKey(message["key"])
         if key:
             response = messageFactory(MESSAGETYPES["RESP"],
@@ -262,7 +270,8 @@ class Servent:
                                       size=len(key),
                                       value=key)
             interact(sock, response)
-            logging.info("Answer sent to %s:%s" % (source[0], source[1]))
+            logging.info("Response sent to client %s:%d with seqNum %d"
+                         % (source[0], source[1], message["nseq"]))
 
         keyflood = messageFactory(MESSAGETYPES["KEYFLOOD"],
                                   ttl=3,
@@ -272,6 +281,7 @@ class Servent:
                                   size=message["size"],
                                   info=message["key"])
         self.propagate(keyflood)
+        logging.info("KEYFLOOD message created and sent to peers")
 
     def respondToTopoReq(self, sock, message):
         """ Build a TOPOFLOOD message with my own address:port and send it
@@ -281,7 +291,8 @@ class Servent:
         if not source:
             logging.warning("Client not found in clientList")
             return
-
+        logging.info("Received TOPOREQ from client %s:%d" % (source[0],
+                                                             source[1]))
         trace = "%s:%s" % (self.ipaddr, self.port)
         response = messageFactory(MESSAGETYPES["RESP"],
                                   nseq=message["nseq"],
@@ -298,6 +309,8 @@ class Servent:
                                    size=len(trace),
                                    info=trace)
         self.propagate(topoFlood)
+        logging.info("KEYFLOOD message created and sent to peers")
+
 
     def respondToTopoFlood(self, sock, message):
         """ A given TOPOFLOOD message should be checked in the messageHistory
@@ -310,7 +323,8 @@ class Servent:
             [message["sourceIp"], message["sourcePort"], message["nseq"]])
         if t not in self.messageHistory:
             self.messageHistory.append(t)
-
+            logging.info("Received TOPOFLOOD from client %s:%d"
+                         % (message["sourceIp"], message["sourcePort"]))
             trace = "%s %s:%s" % (message["info"], self.ipaddr, self.port)
             message["size"] = len(trace)
             message["info"] = trace
@@ -319,7 +333,7 @@ class Servent:
                                       nseq=message["nseq"],
                                       size=len(trace),
                                       value=trace)
-            client = tuple(message["sourceIp"], message["sourcePort"])
+            client = tuple([message["sourceIp"], message["sourcePort"]])
             responseSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             responseSocket.connect(client)
             interact(responseSocket, response)
@@ -329,6 +343,8 @@ class Servent:
         if message["ttl"] > 1:
             message["ttl"] -= 1
             self.propagate(message, ignorePeers=[sock])
+            logging.info("TOPOFLOOD message forwarded to peers with TTL %d"
+                         % message["ttl"])
 
     def respondToKeyFlood(self, sock, message):
         """ A given KEYFLOOD message should be checked in the messageHistory
@@ -345,7 +361,8 @@ class Servent:
         if t in self.messageHistory:
             return
         self.messageHistory.append(t)
-
+        logging.info("Received KEYFLOOD from client %s:%d"
+                     % (message["sourceIp"], message["sourcePort"]))
         key = self.getKey(message["key"])
         if key:
             response = messageFactory(MESSAGETYPES["RESP"],
@@ -356,12 +373,17 @@ class Servent:
             responseSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             responseSocket.connect(client)
             interact(responseSocket, response)
+            logging.info("Response sent to client %s:%d with seqNum %d"
+                         % (message["sourceIp"], message["sourcePort"],
+                            message["nseq"]))
             responseSocket.close()
             del responseSocket
 
         if message["ttl"] > 1:
             message["ttl"] -= 1
             self.propagate(message, ignorePeers=[sock])
+            logging.info("KEYFLOOD message forwarded to peers with TTL %d"
+                         % message["ttl"])
 
     def run(self, servents=None):
         """ Expect servents to be a list of strings
@@ -369,7 +391,8 @@ class Servent:
         """
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.bind((self.ipaddr, self.port))
-        self.sock.listen()
+        self.sock.setblocking(0)
+        self.sock.listen(MAXSERVENTS)
         self.sockList = [self.sock]
 
         # connect to every other servent in the network
@@ -380,15 +403,19 @@ class Servent:
                     ipaddr, port = s.split(":")
                     sock.connect((ipaddr, int(port)))
                     message = messageFactory(MESSAGETYPES["ID"], port=0)
-                    interact(sock, message)
-                    self.sockList.append(sock)
-                    logging.info("Connected to peer %s" % s)
+                    if interact(sock, message):
+                        logging.info("ID sent to %s" % s)
+                        self.sockList.append(sock)
+                    else:
+                        logging.warning("Error sending ID to servent %s" % s)
+                        continue
             except socket.error as err:
                 logging.warning(err)
 
         logging.info("Waiting for connections at port %d" % self.port)
         while True:
-            readable, _, _ = select.select(self.sockList, [], [], 0)
+            readable, _, exceptions = select.select(
+                self.sockList, [], self.sockList, 0)
             for sock in readable:
                 try:
                     # a new servent/client has arrived, so we expect it to
@@ -397,20 +424,25 @@ class Servent:
                         # -1 because the servent socket itself is also in
                         # self.sockList
                         if len(self.sockList) - 1 < MAXSERVENTS:
-                            sock, addr = self.sock.accept()
-                            payload = sock.recv(MTU)
+                            newSock, addr = sock.accept()
+                            newSock.setblocking(0)
+                            payload = newSock.recv(MTU)
                             message = unpack(MESSAGETYPES["ID"], payload)
                             if not message:
                                 logging.warning("Invalid ID message from %s:%s"
                                                 % (addr[0], addr[1]))
-                            # new client
-                            if message["port"] == 0:
-                                self.peerList.add(addr[0], addr[1], sock)
-                                logging.info("Client %s has arrived" % addr)
+                                continue
                             # new servent
+                            if message["port"] == 0:
+                                self.sockList.append(sock)
+                                logging.info("Servent %s:%s has arrived"
+                                             % (addr[0], addr[1]))
+                            # new client
                             else:
-                                self.clientList.add(addr[0], addr[1], sock)
-                                logging.info("Servent %s has arrived" % addr)
+                                self.clientList.add(
+                                    tuple([addr[0], message["port"], sock]))
+                                logging.info("Client %s:%s has arrived"
+                                             % (addr[0], message["port"]))
                             continue
 
                     payload = sock.recv(MTU)
@@ -427,35 +459,41 @@ class Servent:
                     logging.warning(err)
                     if sock != self.sock:
                         self.sockList.remove(sock)
+            for sock in exceptions:
+                client = self.getClient(sock)
+                if client:
+                    self.clientList.remove(client)
+                    logging.info("Client %s:%d hangup, removing socket"
+                                 % (client[0], client[1]))
+                self.sockList.remove(sock)
 
 
 class Client:
-    def __init__(self, port):
+    def __init__(self, ipaddr, port):
+        self.ipaddr = ipaddr
         self.port = port
         self.nseq = 0
         self.sock = None
         self.serventSock = None
 
-    def fetchMessages(self, sock):
-        self.sock.settimeout(SOCKETTIMEOUT)
+    def fetchMessages(self):
         sock, servent = self.sock.accept()
+        self.sock.settimeout(SOCKETTIMEOUT)
         try:
             payload = sock.recv(MTU)
+            print(payload)
             self.sock.settimeout(None)
             if payload:
                 message = unpack(MESSAGETYPES["RESP"], payload)
                 if not message:
                     responseCode, contents = 1, None
                 responseCode, contents = 2, message
+            sock.close()
         except socket.timeout:
             responseCode, contents = 0, None
         except socket.error as err:
             logging.warning(err)
             responseCode, contents = 3, None
-        try:
-            sock.close()
-        except socket.error:
-            pass
         return responseCode, contents
 
     def sendKeyReq(self, key):
@@ -464,55 +502,78 @@ class Client:
                                  nseq=self.nseq,
                                  size=len(key),
                                  key=key)
-        interact(self.serventSock, message)
+        if interact(self.serventSock, message):
+            logging.info("KEYREQ sent to servent for key %s" % key)
+            return self.nseq
+        else:
+            logging.warning("Error sending KEYREQ")
+            return None
 
     def sendTopoReq(self):
         message = messageFactory(MESSAGETYPES["TOPOREQ"],
                                  nseq=self.nseq)
-        interact(self.serventSock, message)
+        if interact(self.serventSock, message):
+            logging.info("TOPOREQ sent to servent")
+        else:
+            logging.warning("Error sending TOPOREQ")
 
     def run(self, servent):
         """ Expects servent to be tuple(ipaddr:port """
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.serventSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
+        logging.info("Initializing client at %s:%d" % (self.ipaddr, self.port))
         try:
-            self.serventSock.connect(servent)
             # create a ID message and identify to servent as a client
             message = messageFactory(MESSAGETYPES["ID"], port=self.port)
-            self.sockinteract(self.serventSock, message)
-            self.nseq += 1
+            if not message:
+                logging.error("Error creating ID message")
+                return
+            self.serventSock.connect(servent)
+            if interact(self.serventSock, message):
+                logging.info("ID sent to servent")
+                self.nseq += 1
+            else:
+                logging.warning("Error sending ID")
+                return
         except socket.error:
-            logging.warning("Could not connect to servent (%s:%d)"
-                            % (servent[0], servent[1]))
-            return None
+            logging.error("Could not connect to servent (%s:%d)"
+                          % (servent[0], servent[1]))
+            return
 
         self.sockList = [self.sock, self.serventSock]
         self.sock.bind((self.ipaddr, self.port))
-        self.listen()
+        self.sock.listen(1)
 
         while True:
             line = input()
+            # end execution
+            if line == "" or line[0] == "Q":
+                logging.info("Bye =)")
+                break
             # query for some key
-            if line[0] == "?":
-                key = line[1:].strip()
+            elif line[0] == "?":
+                if line[1] != ' ':
+                    logging.error(
+                        "Invalid query format, please put at least one space "
+                        "between question mark and the desired key")
+                    continue
+                key = line[2:].strip()
+                if len(key) > 400:
+                    logging.warning("Info is larger than 400 characters")
+                    continue
                 self.sendKeyReq(key)
             # topology request
             elif line.strip() == "T":
                 self.sendTopoReq()
-            # end execution
-            elif line.strip() == "Q" or line == "":
-                logging.info("Bye =)")
-                break
             else:
                 logging.warning("Unknown command")
                 continue
 
             # try to fetch responses from any servent
             responseCount = 0
-            lastNseq = message["nseq"]
+            lastNSeq = self.nseq - 1
             while True:
-                respCode, message = self.fechMessages()
+                respCode, message = self.fetchMessages()
 
                 # 0 - No data
                 # 1 - Invalid Message
@@ -525,7 +586,7 @@ class Client:
                 elif respCode == 1:
                     logging.warning("Invalid packet received from %s:%s"
                                     % (servent[0], servent[1]))
-                elif respCode == 2 and lastNseq == message["nseq"]:
+                elif respCode == 2 and lastNSeq == message["nseq"]:
                     responseCount += 1
                     logging.info("%s %s:%s"
                                  % (message["value"], servent[0], servent[1]))
