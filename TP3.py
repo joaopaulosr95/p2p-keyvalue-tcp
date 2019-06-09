@@ -197,7 +197,7 @@ class Servent:
     def __init__(self, ipaddr, port):
         self.ipaddr = ipaddr
         self.port = port
-        self.clientList = set()
+        self.clientList = dict()
         self.sockList = list()
         self.services = dict()
         self.messageHistory = list()
@@ -219,6 +219,7 @@ class Servent:
                         services[key] = " ".join(splitted[1:])
             self.services = services
             success = True
+            logging.info("Keys loaded succesfully")
         except IOError as err:
             logging.warning(err)
         return success
@@ -242,16 +243,17 @@ class Servent:
 
     def findMessageType(self, payload):
         """ Test which message type has just arrived """
-        for messageType in MESSAGETYPES:
+        for messageType in MESSAGETYPES.values():
             message = unpack(messageType, payload)
             if message:
                 return message
 
     def getClient(self, sock):
-        clients = list(filter(lambda c: c[2] == sock, self.clientList))
-        if len(clients) == 0:
+        if not len(self.clientList):
             return None
-        return clients[0]
+        for client in self.clientList.keys():
+            if self.clientList[client] == sock:
+                return client
 
     def respondToKeyReq(self, sock, message):
         """ Look into local db for the requested key and generate a KEYFLOOD
@@ -310,7 +312,6 @@ class Servent:
                                    info=trace)
         self.propagate(topoFlood)
         logging.info("KEYFLOOD message created and sent to peers")
-
 
     def respondToTopoFlood(self, sock, message):
         """ A given TOPOFLOOD message should be checked in the messageHistory
@@ -414,59 +415,59 @@ class Servent:
 
         logging.info("Waiting for connections at port %d" % self.port)
         while True:
-            readable, _, exceptions = select.select(
-                self.sockList, [], self.sockList, 0)
-            for sock in readable:
-                try:
-                    # a new servent/client has arrived, so we expect it to
-                    # send an ID message
-                    if sock == self.sock:
-                        # -1 because the servent socket itself is also in
-                        # self.sockList
-                        if len(self.sockList) - 1 < MAXSERVENTS:
-                            newSock, addr = sock.accept()
-                            newSock.setblocking(0)
-                            payload = newSock.recv(MTU)
-                            message = unpack(MESSAGETYPES["ID"], payload)
-                            if not message:
-                                logging.warning("Invalid ID message from %s:%s"
-                                                % (addr[0], addr[1]))
-                                continue
-                            # new servent
-                            if message["port"] == 0:
-                                self.sockList.append(sock)
-                                logging.info("Servent %s:%s has arrived"
-                                             % (addr[0], addr[1]))
-                            # new client
-                            else:
-                                self.clientList.add(
-                                    tuple([addr[0], message["port"], sock]))
-                                logging.info("Client %s:%s has arrived"
-                                             % (addr[0], message["port"]))
-                            continue
+           readable, _, _ = select.select(self.sockList, [], [], 0)
+           for sock in readable:
+               try:
+                   # a new servent/client has arrived, so we expect it to
+                   # send an ID message
+                   if sock == self.sock:
+                       # -1 because the servent socket itself is also in
+                       # self.sockList
+                       if len(self.sockList) - 1 < MAXSERVENTS:
+                           newSock, addr = sock.accept()
+                           newSock.setblocking(0)
+                           peerTuple = tuple([addr[0], addr[1]])
+                           self.sockList.append(newSock)
 
-                    payload = sock.recv(MTU)
-                    message = self.findMessageType(payload)
-                    if message["typeNumber"] in MESSAGETYPES["KEYREQ"]:
-                        self.respondToKeyReq(sock, message)
-                    elif message["typeNumber"] == MESSAGETYPES["TOPOREQ"]:
-                        self.respondToTopoReq(sock, message)
-                    elif message["typeNumber"] in MESSAGETYPES["KEYFLOOD"]:
-                        self.respondToKeyFlood(sock, message)
-                    elif message["typeNumber"] in MESSAGETYPES["TOPOFLOOD"]:
-                        self.respondToTopoFlood(sock, message)
-                except socket.error as err:
-                    logging.warning(err)
-                    if sock != self.sock:
-                        self.sockList.remove(sock)
-            for sock in exceptions:
-                client = self.getClient(sock)
-                if client:
-                    self.clientList.remove(client)
-                    logging.info("Client %s:%d hangup, removing socket"
-                                 % (client[0], client[1]))
-                self.sockList.remove(sock)
+                           payload = sock.recv(MTU)
+                           if not payload:
+                               continue
+                           message = self.findMessageType(payload)
+                           if not message or message["typeNumber"] \
+                                   != MESSAGETYPES["ID"]:
+                               logging.warning("Invalid message received")
 
+                           if message["typeNumber"] == MESSAGETYPES["ID"]:
+                               # new servent
+                               if message["port"] == 0:
+                                   logging.info("ID message from peer %s"
+                                                % addr[0])
+                               # new client
+                               else:
+                                   clientTuple = tuple([addr[0],
+                                                        message["port"]])
+                                   self.clientList[clientTuple] = sock
+                                   logging.info("ID message from client %s:%d"
+                                                % (clientTuple[0],
+                                                   clientTuple[1]))
+                           continue
+
+                   payload = sock.recv(MTU)
+                   if not payload:
+                       continue
+                   message = self.findMessageType(payload)
+                   if message["typeNumber"] == MESSAGETYPES["KEYREQ"]:
+                       self.respondToKeyReq(sock, message)
+                   elif message["typeNumber"] == MESSAGETYPES["TOPOREQ"]:
+                       self.respondToTopoReq(sock, message)
+                   elif message["typeNumber"] == MESSAGETYPES["KEYFLOOD"]:
+                       self.respondToKeyFlood(sock, message)
+                   elif message["typeNumber"] == MESSAGETYPES["TOPOFLOOD"]:
+                       self.respondToTopoFlood(sock, message)
+               except socket.error as err:
+                   logging.warning(err)
+                   if sock != self.sock:
+                       self.sockList.remove(sock)
 
 class Client:
     def __init__(self, ipaddr, port):
@@ -477,11 +478,10 @@ class Client:
         self.serventSock = None
 
     def fetchMessages(self):
-        sock, servent = self.sock.accept()
         self.sock.settimeout(SOCKETTIMEOUT)
         try:
+            sock, servent = self.sock.accept()
             payload = sock.recv(MTU)
-            print(payload)
             self.sock.settimeout(None)
             if payload:
                 message = unpack(MESSAGETYPES["RESP"], payload)
@@ -503,7 +503,7 @@ class Client:
                                  size=len(key),
                                  key=key)
         if interact(self.serventSock, message):
-            logging.info("KEYREQ sent to servent for key %s" % key)
+            logging.info("Sent KEYREQ for key %s" % key)
             return self.nseq
         else:
             logging.warning("Error sending KEYREQ")
@@ -524,12 +524,12 @@ class Client:
         logging.info("Initializing client at %s:%d" % (self.ipaddr, self.port))
         try:
             # create a ID message and identify to servent as a client
-            message = messageFactory(MESSAGETYPES["ID"], port=self.port)
-            if not message:
+            helloMessage = messageFactory(MESSAGETYPES["ID"], port=self.port)
+            if not helloMessage:
                 logging.error("Error creating ID message")
                 return
             self.serventSock.connect(servent)
-            if interact(self.serventSock, message):
+            if interact(self.serventSock, helloMessage):
                 logging.info("ID sent to servent")
                 self.nseq += 1
             else:
