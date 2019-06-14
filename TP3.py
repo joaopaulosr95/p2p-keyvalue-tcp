@@ -12,20 +12,18 @@ logging.basicConfig(level=logging.DEBUG,
 MAXSERVENTS = 10
 SOCKETTIMEOUT = 4.0
 MTU = 416  # keyflood/topoflood are the larger packets we implement
-MESSAGETYPES = dict(
-    ID=4,
-    KEYREQ=5,
-    TOPOREQ=6,
-    KEYFLOOD=7,
-    TOPOFLOOD=8,
-    RESP=9)
-MESSAGEHEADERS = dict(
-    ID="!HH",
-    KEYREQ="!HLH%ds",
-    TOPOREQ="!HL",
-    KEYFLOOD="!HHLLHH%ds",
-    TOPOFLOOD="!HHLLHH%ds",
-    RESP="!HLH%ds")
+MESSAGETYPES = dict(ID=4,
+                    KEYREQ=5,
+                    TOPOREQ=6,
+                    KEYFLOOD=7,
+                    TOPOFLOOD=8,
+                    RESP=9)
+MESSAGEHEADERS = dict(ID="!HH",
+                      KEYREQ="!HLH%ds",
+                      TOPOREQ="!HL",
+                      KEYFLOOD="!HHLLHH%ds",
+                      TOPOFLOOD="!HHLLHH%ds",
+                      RESP="!HLH%ds")
 
 
 def messageFactory(typeNumber, **kwargs):
@@ -229,8 +227,8 @@ class Servent:
 
     def propagate(self, message, ignorePeers=None):
         """Send a given message to every peer connected with.
-        'ignorePeers' is used so a given message is not forwarded to the peer
-        who sent it to us.
+        'ignorePeers' holds one or more sockets so a given message is not
+        forwarded to them.
         """
         for peer in self.peerList:
             if ignorePeers and self.peerList[peer] in ignorePeers:
@@ -251,7 +249,6 @@ class Servent:
 
         Returns:
             (string, integer):ipaddr and port of the client
-
         """
         if not len(self.clientList):
             return None
@@ -268,7 +265,6 @@ class Servent:
 
         Returns:
             ipaddr(string):ipaddr of the peer
-
         """
         if not len(self.peerList):
             return None
@@ -277,7 +273,9 @@ class Servent:
                 return ipaddr
 
     def respondToKeyReq(self, sock, message):
-        """Look into local db for the requested key and generate a KEYFLOOD
+        """Look into local db for the requested key and generate a RESP
+        message to be sent to the client who has requested the key with
+        the proper value. Build also a KEYFLOOD message with the initial
         message to ask for the same key to the other peers.
         """
         source = self.getClient(sock)
@@ -313,8 +311,10 @@ class Servent:
         logging.info("KEYFLOOD message created and sent to peers")
 
     def respondToTopoReq(self, sock, message):
-        """Build a TOPOFLOOD message with my own address:port and send it
-        to the next peers so they can append their address:port to the same.
+        """Build a RESP message with my own address:port and send it to the
+        client who has requested the network topology. Build also a TOPOFLOOD
+        message with my own address:port and send it to the next peers so 
+        they can append their address:port to the same.
         """
         source = self.getClient(sock)
         if not source:
@@ -333,7 +333,6 @@ class Servent:
         responseSocket.close()
         del responseSocket
         logging.info("RESP sent to %s:%s" % (source[0], source[1]))
-
         topoFlood = messageFactory(MESSAGETYPES["TOPOFLOOD"],
                                    ttl=3,
                                    nseq=message["nseq"],
@@ -408,7 +407,6 @@ class Servent:
                                         message["nseq"]))
             responseSocket.close()
             del responseSocket
-
         if message["ttl"] > 1:
             message["ttl"] -= 1
             self.propagate(message, ignorePeers=[sock])
@@ -485,13 +483,11 @@ class Servent:
                                     waitingID[addr[0]] = newSock
                                 self.sockList.append(newSock)
                                 continue
-
                         payload = sock.recv(MTU)
                         if not payload:
                             continue
                         logging.debug(sock.getpeername())
                         logging.debug(payload)
-
                         messageType = self.getMessageType(payload)
                         message = unpack(messageType, payload)
                         if not message:
@@ -607,8 +603,8 @@ class Client:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.serventSock = socket.socket(socket.AF_INET,
                                              socket.SOCK_STREAM)
-            logging.info("Initializing client at %s:%d" % (self.ipaddr,
-                                                           self.port))
+            logging.info("Initializing client at %s:%d"
+                         % (self.ipaddr, self.port))
             try:
                 # create a ID message and identify to servent as a client
                 helloMessage = messageFactory(MESSAGETYPES["ID"],
@@ -655,7 +651,6 @@ class Client:
                 else:
                     logging.warning("Unknown command")
                     continue
-
                 # try to fetch responses from any servent
                 responseCount = 0
                 while True:
