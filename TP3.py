@@ -152,7 +152,7 @@ def unpack(typeNumber, payload):
                                      sourcePort=unpacked[4],
                                      size=unpacked[5],
                                      info=unpacked[6].decode())
-        elif typeNumber == MESSAGEHEADERS["TOPOFLOOD"]:
+        elif typeNumber == MESSAGETYPES["TOPOFLOOD"]:
             dataSize = len(payload) \
                        - struct.calcsize(MESSAGEHEADERS["TOPOFLOOD"] % 0)
             unpacked = struct.unpack(MESSAGEHEADERS["TOPOFLOOD"] % dataSize,
@@ -237,14 +237,10 @@ class Servent:
                 continue
             interact(self.peerList[peer], message)
 
-    def findMessageType(self, payload):
+    def getMessageType(self, payload):
         """Test which message type has just arrived."""
         messageType = struct.unpack("!H", payload[:2])[0]
-        if messageType not in MESSAGETYPES.values():
-            return None
-        message = unpack(messageType, payload)
-        if message:
-            return message
+        return messageType if messageType in MESSAGETYPES.values() else None
 
     def getClient(self, sock):
         """Take a socket and retrieve ipaddr and port of the client on the
@@ -301,7 +297,7 @@ class Servent:
             interact(responseSocket, response)
             responseSocket.close()
             del responseSocket
-            logging.info("Key %s found! Response sent to client %s:%d with "
+            logging.info("Key %s found! RESP sent to client %s:%d with "
                          "seqNum %d" % (message["key"],
                                         source[0],
                                         source[1],
@@ -324,7 +320,7 @@ class Servent:
         if not source:
             logging.warning("Client not found in clientList")
             return
-        logging.info("Received TOPOREQ from client %s:%d" 
+        logging.info("Received TOPOREQ from client %s:%d"
                      % (source[0], source[1]))
         trace = "%s:%s" % (self.ipaddr, self.port)
         response = messageFactory(MESSAGETYPES["RESP"],
@@ -336,7 +332,7 @@ class Servent:
         interact(responseSocket, response)
         responseSocket.close()
         del responseSocket
-        logging.info("Answer sent to %s:%s" % (source[0], source[1]))
+        logging.info("RESP sent to %s:%s" % (source[0], source[1]))
 
         topoFlood = messageFactory(MESSAGETYPES["TOPOFLOOD"],
                                    ttl=3,
@@ -366,13 +362,15 @@ class Servent:
                                       nseq=message["nseq"],
                                       size=len(trace),
                                       value=trace)
+            logging.debug("Generated TOPOFLOOD response")
+            logging.debug(response)
             client = (message["sourceIp"], message["sourcePort"])
             responseSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             responseSocket.connect(client)
             interact(responseSocket, response)
             responseSocket.close()
             del responseSocket
-
+            logging.info("RESP sent to %s:%s" % (client[0], client[1]))
         if message["ttl"] > 1:
             message["ttl"] -= 1
             self.propagate(message, ignorePeers=[sock])
@@ -494,7 +492,11 @@ class Servent:
                         logging.debug(sock.getpeername())
                         logging.debug(payload)
 
-                        message = self.findMessageType(payload)
+                        messageType = self.getMessageType(payload)
+                        message = unpack(messageType, payload)
+                        if not message:
+                            continue
+                        logging.debug(message)
                         if message["typeNumber"] == MESSAGETYPES["ID"]:
                             if not len(waitingID):
                                 continue

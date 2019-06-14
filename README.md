@@ -2,7 +2,6 @@
 
 - Servent detecta a queda de um peer e remove o socket da lista de peers corretamente ❌
 - Servent detecta a queda de um client e remove o socket da lista de clients corretamente
-    > A porta que o cliente usava às vezes não é liberada ❌
 
 ## ID
 
@@ -38,8 +37,8 @@
 
 ## TOPOFLOOD
 
-- Servent recebe e desmonta o pacote corretamente ❌
-- Servent identifica a chave no banco corretamente ❌
-- Servent monta um pacote RESP e envia corretamente com seu ip:porta anexo ao payload ❌
-- Servent decrementa o TTL e encaminha o TOPOFLOOD corretamente ❌
-- Cliente recebe e desmonta o pacote RESP para o TOPOFLOOD corretamente ❌
+- Servent recebe e desmonta o pacote corretamente ✔️
+- Servent identifica a chave no banco corretamente ✔️
+- Servent monta um pacote RESP e envia corretamente com seu ip:porta anexo ao payload ✔️
+- Servent decrementa o TTL e encaminha o TOPOFLOOD corretamente ✔️
+- Cliente recebe e desmonta o pacote RESP para o TOPOFLOOD corretamente ✔️
