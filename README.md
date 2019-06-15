@@ -1,8 +1,5 @@
 # testes
 
-- Servent detecta a queda de um peer e remove o socket da lista de peers corretamente ❌
-- Servent detecta a queda de um client e remove o socket da lista de clients corretamente
-
 ## ID
 
 - Servent detecta a queda de um cliente e remove o socket da lista de clients corretamente ✔️
@@ -42,3 +39,8 @@
 - Servent monta um pacote RESP e envia corretamente com seu ip:porta anexo ao payload ✔️
 - Servent decrementa o TTL e encaminha o TOPOFLOOD corretamente ✔️
 - Cliente recebe e desmonta o pacote RESP para o TOPOFLOOD corretamente ✔️
+
+## Terminação
+
+- Servent detecta a queda de um peer e remove o socket da lista de peers corretamente ✔️
+- Servent detecta a queda de um client e remove o socket da lista de clients corretamente ✔️

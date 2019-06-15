@@ -4,7 +4,7 @@ import select
 import socket
 import struct
 
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format="[%(asctime)s][%(levelname)s]%(message)s",
                     datefmt="%m-%d-%Y %I:%M:%S %p")
 
@@ -194,12 +194,12 @@ class Servent:
         self.sockList = list()
         self.peerList = dict()
         self.clientList = dict()
-        self.services = dict()
+        self.store = dict()
         self.messageHistory = list()
 
     def loadKeys(self, path):
         """Take a file and read its contents to memory into a dict."""
-        services = dict()
+        keys = dict()
         success = False
         try:
             with open(path) as inputFile:
@@ -211,8 +211,8 @@ class Servent:
                         # Extracts service name
                         key = splitted[0]
                         # Service port, protocol and any more info
-                        services[key] = " ".join(splitted[1:])
-            self.services = services
+                        keys[key] = " ".join(splitted[1:])
+            self.store = keys
             success = True
             logging.info("Keys loaded succesfully")
         except IOError as err:
@@ -221,8 +221,8 @@ class Servent:
 
     def getKey(self, key):
         """Search for a key in local db."""
-        if key in self.services:
-            return self.services[key]
+        if key in self.store:
+            return self.store[key]
         return None
 
     def propagate(self, message, ignorePeers=None):
@@ -415,19 +415,19 @@ class Servent:
 
     def handleDisconnect(self, sock):
         try:
-            raddr = sock.getpeername()
-            if raddr in self.clientList:
-                logging.warning("Client %s:%d disconnected"
-                                % (raddr[0], raddr[1]))
-                self.clientList.remove(raddr)
+            peer = self.getPeer(sock)
+            if peer:
+                logging.info("Peer %s disconnected" % (peer))
+                del self.peerList[peer]
             else:
-                logging.warning("Peer %s:%d disconnected"
-                                % (raddr[0], raddr[1]))
-                self.peerList.remove(raddr)
+                client, port = self.getClient(sock)
+                if client:
+                    logging.info("Client %s:%d disconnected" % (client, port))
+                    del self.clientList[client]
             sock.close()
             self.sockList.remove(sock)
             del sock
-        except socket.error:
+        except (socket.error, OSError, AttributeError):
             pass
 
     def run(self, servents=None):
@@ -438,6 +438,7 @@ class Servent:
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.bind((self.ipaddr, self.port))
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.sock.setblocking(0)
             self.sock.listen(MAXSERVENTS)
             self.sockList = [self.sock]
@@ -454,6 +455,7 @@ class Servent:
                         if interact(sock, message):
                             logging.info("ID sent to %s" % s)
                             self.sockList.append(sock)
+                            self.peerList[ipaddr] = sock
                         else:
                             logging.warning("Error sending ID to servent %s"
                                             % s)
@@ -466,9 +468,9 @@ class Servent:
             waitingID = dict()
             logging.info("Waiting for connections at port %d" % self.port)
             while True:
-                readable, _, _ = select.select(self.sockList, [], [], 0)
-                for sock in readable:
-                    try:
+                try:
+                    toread, _, _ = select.select(self.sockList, [], [], 0)
+                    for sock in toread:
                         # a new servent/client has arrived
                         if sock == self.sock:
                             # -1 because the servent socket itself is also in
@@ -485,7 +487,9 @@ class Servent:
                                 continue
                         payload = sock.recv(MTU)
                         if not payload:
+                            self.handleDisconnect(sock)
                             continue
+
                         logging.debug(sock.getpeername())
                         logging.debug(payload)
                         messageType = self.getMessageType(payload)
@@ -521,20 +525,18 @@ class Servent:
                         elif message["typeNumber"] == \
                                 MESSAGETYPES["TOPOFLOOD"]:
                             self.respondToTopoFlood(sock, message)
-                    except socket.error:
-                        if sock == self.sock:
-                            return
-                        self.handleDisconnect(sock)
+                except socket.error:
+                    if sock == self.sock:
+                        return
+                    self.handleDisconnect(sock)
         except KeyboardInterrupt:
             logging.warning("Manual interrupt detected! Closing all "
                             "connections, please wait")
-            for s in self.sockList:
-                try:
-                    s.close()
-                except AttributeError:
-                    pass
-                finally:
-                    print(".")
+        for s in self.sockList:
+            try:
+                s.close()
+            except (socket.error, AttributeError, OSError):
+                pass
 
 
 class Client:
@@ -625,6 +627,7 @@ class Client:
 
             self.sockList = [self.sock, self.serventSock]
             self.sock.bind((self.ipaddr, self.port))
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.sock.listen(MAXSERVENTS)
 
             while True:
@@ -673,8 +676,8 @@ class Client:
         except KeyboardInterrupt:
             logging.warning("Manual interrupt detected! Closing all "
                             "connections, please wait")
-        try:
-            self.sock.close()
-            self.serventSock.close()
-        except AttributeError:
-            pass
+        for sock in [self.serventSock, self.sock]:
+            try:
+                sock.close()
+            except (socket.error, AttributeError, OSError):
+                pass
