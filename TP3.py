@@ -4,7 +4,8 @@ import select
 import socket
 import struct
 
-logging.basicConfig(level=logging.INFO,
+# set level to logging.DEBUG to enable verbosity more messages
+logging.basicConfig(level=logging.CRITICAL,
                     format="[%(asctime)s][%(levelname)s]%(message)s",
                     datefmt="%m-%d-%Y %I:%M:%S %p")
 
@@ -313,7 +314,7 @@ class Servent:
     def respondToTopoReq(self, sock, message):
         """Build a RESP message with my own address:port and send it to the
         client who has requested the network topology. Build also a TOPOFLOOD
-        message with my own address:port and send it to the next peers so 
+        message with my own address:port and send it to the next peers so
         they can append their address:port to the same.
         """
         source = self.getClient(sock)
@@ -639,9 +640,10 @@ class Client:
                 # query for some key
                 elif line[0] == "?":
                     if line[1] != ' ':
-                        logging.error("Invalid query format, please put at "
-                                      "least one space between question mark "
-                                      "and the desired key")
+                        #logging.error("Invalid query format, please put at "
+                        #              "least one space between question mark "
+                        #              "and the desired key")
+                        print("Comando desconhecido")
                         continue
                     key = line[2:].strip()
                     if len(key) > 400:
@@ -652,7 +654,8 @@ class Client:
                 elif line.strip() == "T":
                     self.sendTopoReq()
                 else:
-                    logging.warning("Unknown command")
+                    #logging.warning("Unknown command")
+                    print("Comando desconhecido")
                     continue
                 # try to fetch responses from any servent
                 responseCount = 0
@@ -664,14 +667,18 @@ class Client:
                     # 3 - Any king of error
                     if responseCode == 0:
                         if not responseCount:
-                            logging.warning("No data received")
+                            #logging.warning("No data received")
+                            print("Nenhuma resposta recebida")
                         break
                     elif responseCode == 1:
-                        logging.warning("Invalid packet received from %s"
-                                        % (servent[0]))
+                        #logging.warning("Invalid packet received from %s"
+                        #                % (servent[0]))
+                        print("Mensagem incorreta recebida de %s:%d"
+                              % (servent[0], servent[1]))
                     elif responseCode == 2 and self.nseq == message["nseq"]:
                         responseCount += 1
                         logging.info("%s %s" % (message["value"], servent[0]))
+                        print("%s %s" % (message["value"], servent[0]))
                 self.nseq += 1
         except KeyboardInterrupt:
             logging.warning("Manual interrupt detected! Closing all "
